@@ -9,22 +9,43 @@ from ..auth import get_password_hash
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.get("/", response_model=List[schemas.OrgMemberResponse])
-def list_org_users(
-    membership: models.OrgMembership = Depends(get_active_membership),
+@router.get("/search", response_model=List[schemas.UserSearchResponse])
+def search_users(
+    query: str,
+    current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all members in the active organization."""
+    """Search for users by email or name (Global)."""
+    users = (
+        db.query(models.User)
+        .filter(
+            (models.User.email.contains(query)) | (models.User.name.contains(query))
+        )
+        .limit(10)
+        .all()
+    )
+    return users
+
+
+@router.get("/", response_model=List[schemas.ProjectMemberResponse])
+def list_project_members(
+    membership: models.ProjectMembership = Depends(get_active_membership),
+    db: Session = Depends(get_db),
+):
+    """List all members in the active project."""
+    if not membership:
+         raise HTTPException(status_code=400, detail="X-Project-Id header required to list project members")
+
     members = (
-        db.query(models.OrgMembership)
-        .filter(models.OrgMembership.org_id == membership.org_id)
+        db.query(models.ProjectMembership)
+        .filter(models.ProjectMembership.project_id == membership.project_id)
         .all()
     )
     result = []
     for m in members:
         user = db.query(models.User).filter(models.User.id == m.user_id).first()
         if user:
-            result.append(schemas.OrgMemberResponse(
+            result.append(schemas.ProjectMemberResponse(
                 id=m.id,
                 user_id=user.id,
                 email=user.email,
@@ -34,79 +55,69 @@ def list_org_users(
     return result
 
 
-@router.post("/", response_model=schemas.OrgMemberResponse)
-def create_user_in_org(
-    payload: schemas.CreateUserInOrgRequest,
-    membership: models.OrgMembership = Depends(get_active_membership),
+@router.post("/register", response_model=schemas.UserResponse)
+def register_user(
+    payload: schemas.CreateUserRequest,
+    current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Admin creates a brand-new user and adds them directly to the active org."""
-    if membership.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can add users")
+    """Super-admin registers a brand-new user."""
+    if not current_user.is_superadmin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only super-admins can register users")
 
     existing = db.query(models.User).filter(models.User.email == payload.email).first()
     if existing:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered. Use 'Add Existing' instead.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
 
     user = models.User(
         email=payload.email,
-        name=payload.email.split("@")[0],
+        name=payload.name or payload.email.split("@")[0],
         password_hash=get_password_hash(payload.password),
+        is_superadmin=payload.is_superadmin or False
     )
     db.add(user)
-    db.flush()
-
-    new_membership = models.OrgMembership(
-        user_id=user.id,
-        org_id=membership.org_id,
-        role=payload.role or "user",
-    )
-    db.add(new_membership)
     db.commit()
     db.refresh(user)
 
-    return schemas.OrgMemberResponse(
-        id=new_membership.id,
-        user_id=user.id,
-        email=user.email,
-        name=user.name,
-        role=new_membership.role,
-    )
+    return user
 
 
-@router.post("/add-to-org", response_model=schemas.OrgMemberResponse)
-def add_existing_user_to_org(
-    payload: schemas.AddUserToOrgRequest,
-    membership: models.OrgMembership = Depends(get_active_membership),
+@router.post("/add-to-project", response_model=schemas.ProjectMemberResponse)
+def add_user_to_project(
+    payload: schemas.AddUserToProjectRequest,
+    membership: models.ProjectMembership = Depends(get_active_membership),
     db: Session = Depends(get_db),
 ):
-    """Admin adds an already-registered user to the active organization."""
+    """Project admin adds an existing user to the active project."""
+    if not membership:
+         raise HTTPException(status_code=400, detail="X-Project-Id header required")
+    
     if membership.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can add users")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only project admins can add users")
 
     user = db.query(models.User).filter(models.User.email == payload.email).first()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found. They must register first.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found. Admin must register them first.")
 
-    # Check if already a member of THIS org
+    # Check if already a member
     existing = (
-        db.query(models.OrgMembership)
-        .filter(models.OrgMembership.user_id == user.id, models.OrgMembership.org_id == membership.org_id)
+        db.query(models.ProjectMembership)
+        .filter(models.ProjectMembership.user_id == user.id, models.ProjectMembership.project_id == membership.project_id)
         .first()
     )
     if existing:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User is already a member of this organization")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User is already a member of this project")
 
-    new_membership = models.OrgMembership(
+    new_membership = models.ProjectMembership(
         user_id=user.id,
-        org_id=membership.org_id,
+        project_id=membership.project_id,
         role=payload.role or "user",
     )
     db.add(new_membership)
     db.commit()
     db.refresh(new_membership)
 
-    return schemas.OrgMemberResponse(
+    return schemas.ProjectMemberResponse(
         id=new_membership.id,
         user_id=user.id,
         email=user.email,
@@ -116,25 +127,26 @@ def add_existing_user_to_org(
 
 
 @router.delete("/{membership_id}", response_model=schemas.Message)
-def remove_user_from_org(
+def remove_user_from_project(
     membership_id: int,
-    current_membership: models.OrgMembership = Depends(get_active_membership),
+    current_membership: models.ProjectMembership = Depends(get_active_membership),
     db: Session = Depends(get_db),
 ):
-    """Admin removes a user from the active organization (doesn't delete their account)."""
+    """Project admin removes a user from the project."""
+    if not current_membership:
+         raise HTTPException(status_code=400, detail="X-Project-Id header required")
+
     if current_membership.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can remove users")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only project admins can remove users")
 
     target = (
-        db.query(models.OrgMembership)
-        .filter(models.OrgMembership.id == membership_id, models.OrgMembership.org_id == current_membership.org_id)
+        db.query(models.ProjectMembership)
+        .filter(models.ProjectMembership.id == membership_id, models.ProjectMembership.project_id == current_membership.project_id)
         .first()
     )
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found")
-    if target.user_id == current_membership.user_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot remove yourself")
-
+    
     db.delete(target)
     db.commit()
-    return {"detail": "User removed from organization"}
+    return {"detail": "User removed from project"}

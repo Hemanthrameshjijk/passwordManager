@@ -3,15 +3,15 @@ from sqlalchemy.orm import relationship
 from .database import Base
 
 
-class Organization(Base):
-    __tablename__ = "organizations"
+class Project(Base):
+    __tablename__ = "projects"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)
 
-    memberships = relationship("OrgMembership", back_populates="organization", cascade="all, delete-orphan")
-    credentials = relationship("Credential", back_populates="organization")
-    files = relationship("File", back_populates="organization")
+    memberships = relationship("ProjectMembership", back_populates="project", cascade="all, delete-orphan")
+    credentials = relationship("Credential", back_populates="project")
+    files = relationship("File", back_populates="project")
 
 
 class User(Base):
@@ -22,28 +22,29 @@ class User(Base):
     name = Column(String, nullable=True)
     password_hash = Column(String, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    is_superadmin = Column(Boolean, default=False, nullable=False)
 
-    memberships = relationship("OrgMembership", back_populates="user", cascade="all, delete-orphan")
+    memberships = relationship("ProjectMembership", back_populates="user", cascade="all, delete-orphan")
     credentials = relationship("Credential", back_populates="creator")
     files = relationship("File", back_populates="creator")
     credential_permissions = relationship("CredentialPermission", back_populates="user")
     file_permissions = relationship("FilePermission", back_populates="user")
 
 
-class OrgMembership(Base):
-    """Many-to-many: a user can belong to multiple organizations with different roles."""
-    __tablename__ = "org_memberships"
+class ProjectMembership(Base):
+    """Many-to-many: a user can belong to multiple projects."""
+    __tablename__ = "project_memberships"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     role = Column(String, default="user", nullable=False)  # "admin" or "user"
 
     user = relationship("User", back_populates="memberships")
-    organization = relationship("Organization", back_populates="memberships")
+    project = relationship("Project", back_populates="memberships")
 
     __table_args__ = (
-        UniqueConstraint("user_id", "org_id", name="uq_user_org"),
+        UniqueConstraint("user_id", "project_id", name="uq_user_project"),
     )
 
 
@@ -51,13 +52,13 @@ class Credential(Base):
     __tablename__ = "credentials"
 
     id = Column(Integer, primary_key=True, index=True)
-    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"))
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     domain = Column(String, nullable=False)
     username = Column(String, nullable=False)
     password = Column(String, nullable=False)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
 
-    organization = relationship("Organization", back_populates="credentials")
+    project = relationship("Project", back_populates="credentials")
     creator = relationship("User", back_populates="credentials")
     permissions = relationship("CredentialPermission", back_populates="credential")
 
@@ -78,12 +79,12 @@ class File(Base):
     __tablename__ = "files"
 
     id = Column(Integer, primary_key=True, index=True)
-    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"))
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     file_name = Column(String, nullable=False)
     storage_url = Column(String, nullable=False)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
 
-    organization = relationship("Organization", back_populates="files")
+    project = relationship("Project", back_populates="files")
     creator = relationship("User", back_populates="files")
     permissions = relationship("FilePermission", back_populates="file")
 

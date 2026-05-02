@@ -1,58 +1,55 @@
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'AUTOFILL') {
-    const { username, password } = request.data;
-    const success = performAutofill(username, password);
-    sendResponse({ status: success ? 'success' : 'failed' });
+console.log('Zero-Knowledge Vault Content Script Loaded');
+
+// Helper to find common login fields
+function findLoginFields() {
+  const inputs = Array.from(document.querySelectorAll('input'));
+  
+  const passwordField = inputs.find(i => 
+    i.type === 'password' || 
+    i.name?.toLowerCase().includes('password') || 
+    i.id?.toLowerCase().includes('password')
+  );
+
+  const userField = inputs.find(i => 
+    (i.type === 'email' || i.type === 'text') && 
+    (i.name?.toLowerCase().includes('user') || 
+     i.name?.toLowerCase().includes('email') || 
+     i.name?.toLowerCase().includes('login') ||
+     i.id?.toLowerCase().includes('user') ||
+     i.id?.toLowerCase().includes('email'))
+  );
+
+  return { userField, passwordField };
+}
+
+// Guaranteed fill function
+function fillCredentials(username, password) {
+  const { userField, passwordField } = findLoginFields();
+
+  if (userField) {
+    userField.value = username;
+    userField.dispatchEvent(new Event('input', { bubbles: true }));
+    userField.dispatchEvent(new Event('change', { bubbles: true }));
+    console.log('Filled username');
+  }
+
+  if (passwordField) {
+    passwordField.value = password;
+    passwordField.dispatchEvent(new Event('input', { bubbles: true }));
+    passwordField.dispatchEvent(new Event('change', { bubbles: true }));
+    console.log('Filled password');
+  }
+
+  if (!userField && !passwordField) {
+    alert('Could not detect login fields on this page. Please click into the fields manually.');
+  }
+}
+
+// Listen for messages from Popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'AUTOFILL') {
+    const { username, password } = message.credential;
+    fillCredentials(username, password);
+    sendResponse({ success: true });
   }
 });
-
-function performAutofill(username, password, retryCount = 0) {
-  console.log(`[Zero-Knowledge] Attempting autofill (Attempt ${retryCount + 1})`);
-  
-  // Find password field first (usually the most unique)
-  const passwordField = document.querySelector('input[type="password"]');
-  
-  // Find username/email field
-  // Look for text or email types, often near the password field
-  const potentialUsernameFields = Array.from(document.querySelectorAll('input[type="text"], input[type="email"], input:not([type])'));
-  
-  // Strategy: Find the input field immediately before the password field
-  let usernameField = null;
-  if (passwordField) {
-    const allInputs = Array.from(document.querySelectorAll('input'));
-    const passIndex = allInputs.indexOf(passwordField);
-    if (passIndex > 0) {
-      usernameField = allInputs[passIndex - 1];
-    }
-  }
-
-  // Fallback: search by common attributes
-  if (!usernameField) {
-    usernameField = document.querySelector('input[name*="user"], input[name*="email"], input[id*="user"], input[id*="email"]');
-  }
-
-  if (passwordField && usernameField) {
-    // Inject values
-    usernameField.value = username;
-    passwordField.value = password;
-
-    // Trigger events so the site's JS (React/Vue/etc) picks up the change
-    const events = ['input', 'change', 'blur'];
-    events.forEach(evtName => {
-      usernameField.dispatchEvent(new Event(evtName, { bubbles: true }));
-      passwordField.dispatchEvent(new Event(evtName, { bubbles: true }));
-    });
-
-    console.log('[Zero-Knowledge] Autofill successful');
-    return true;
-  }
-
-  // Retry logic
-  if (retryCount < 3) {
-    setTimeout(() => performAutofill(username, password, retryCount + 1), 1000);
-    return false; // Will return success later if retry works, but for now we signal in progress
-  }
-
-  console.error('[Zero-Knowledge] Could not find login fields');
-  return false;
-}

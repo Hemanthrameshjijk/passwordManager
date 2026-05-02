@@ -1,15 +1,45 @@
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
 
-from .database import engine
-from . import models
-from .routers import auth as auth_router, users as users_router, credentials as credentials_router, files as files_router, orgs as orgs_router
+from .database import engine, SessionLocal
+from . import models, auth
+from .routers import auth as auth_router, users as users_router, credentials as credentials_router, files as files_router, projects as projects_router
 
-models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Password Manager API")
+def seed_admin():
+    db: Session = SessionLocal()
+    try:
+        admin_email = "admin@gmail.com"
+        admin_pass = "admin"
+        admin = db.query(models.User).filter(models.User.email == admin_email).first()
+        if not admin:
+            print(f"Seeding super-admin: {admin_email}")
+            new_admin = models.User(
+                email=admin_email,
+                name="Super Admin",
+                password_hash=auth.get_password_hash(admin_pass),
+                is_superadmin=True
+            )
+            db.add(new_admin)
+            db.commit()
+    finally:
+        db.close()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic
+    models.Base.metadata.create_all(bind=engine)
+    seed_admin()
+    yield
+    # Shutdown logic (none needed)
+
+
+app = FastAPI(title="Password Manager API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,7 +60,7 @@ app.include_router(auth_router.router)
 app.include_router(users_router.router)
 app.include_router(credentials_router.router)
 app.include_router(files_router.router)
-app.include_router(orgs_router.router)
+app.include_router(projects_router.router)
 
 @app.get("/")
 def root():

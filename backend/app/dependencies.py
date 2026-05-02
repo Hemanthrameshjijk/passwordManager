@@ -36,31 +36,33 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 
-def get_active_org_id(x_org_id: Optional[str] = Header(None)) -> Optional[int]:
-    """Extract the active organization ID from the X-Org-Id header.
-    The frontend sends this to indicate which org the user is currently working in."""
-    if x_org_id is None:
+def get_active_project_id(x_project_id: Optional[str] = Header(None)) -> Optional[int]:
+    """Extract the active project ID from the X-Project-Id header.
+    Returns None if not provided (implies Private scope)."""
+    if x_project_id is None:
         return None
     try:
-        return int(x_org_id)
+        return int(x_project_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid X-Org-Id header")
+        raise HTTPException(status_code=400, detail="Invalid X-Project-Id header")
 
 
 def get_active_membership(
     current_user: models.User = Depends(get_current_user),
-    active_org_id: Optional[int] = Depends(get_active_org_id),
+    active_project_id: Optional[int] = Depends(get_active_project_id),
     db: Session = Depends(get_db),
-) -> models.OrgMembership:
-    """Get the user's membership for the active org. Raises 403 if not a member."""
-    if active_org_id is None:
-        raise HTTPException(status_code=400, detail="X-Org-Id header is required for this operation")
+) -> Optional[models.ProjectMembership]:
+    """Get the user's membership for the active project. 
+    If active_project_id is None, returns None (Private scope).
+    Raises 403 if ID provided but not a member."""
+    if active_project_id is None:
+        return None
 
     membership = (
-        db.query(models.OrgMembership)
-        .filter(models.OrgMembership.user_id == current_user.id, models.OrgMembership.org_id == active_org_id)
+        db.query(models.ProjectMembership)
+        .filter(models.ProjectMembership.user_id == current_user.id, models.ProjectMembership.project_id == active_project_id)
         .first()
     )
     if not membership:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not a member of this organization")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not a member of this project")
     return membership

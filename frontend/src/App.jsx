@@ -1,24 +1,27 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 
 const API_URL = 'http://localhost:8000';
 const tokenKey = 'pm_token';
-const orgKey = 'pm_active_org';
+const projectKey = 'pm_active_project';
 
 function getToken() { return localStorage.getItem(tokenKey); }
 function setTokenStorage(token) { localStorage.setItem(tokenKey, token); }
-function clearTokenStorage() { localStorage.removeItem(tokenKey); localStorage.removeItem(orgKey); }
+function clearTokenStorage() { localStorage.removeItem(tokenKey); localStorage.removeItem(projectKey); }
 
-function getStoredOrgId() { return localStorage.getItem(orgKey); }
-function setStoredOrgId(id) { localStorage.setItem(orgKey, String(id)); }
+function getStoredProjectId() { return localStorage.getItem(projectKey); }
+function setStoredProjectId(id) { 
+  if (id === null) localStorage.removeItem(projectKey);
+  else localStorage.setItem(projectKey, String(id)); 
+}
 
-function apiFetch(path, options = {}, orgId = null) {
+function apiFetch(path, options = {}, projectId = null) {
   const headers = options.headers || {};
   if (!(options.body instanceof FormData)) {
     headers['Content-Type'] = headers['Content-Type'] || 'application/json';
   }
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
-  if (orgId) headers['X-Org-Id'] = String(orgId);
+  if (projectId) headers['X-Project-Id'] = String(projectId);
   return fetch(`${API_URL}${path}`, { ...options, headers });
 }
 
@@ -32,13 +35,65 @@ function Toast({ message, type, onClose }) {
   return <div className={`toast ${type}`}>{message}</div>;
 }
 
+// ===== Searchable User Dropdown =====
+function UserSearchDropdown({ onSelect, placeholder = "Search for a user..." }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (query.length < 2) {
+      setResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const res = await apiFetch(`/users/search?query=${query}`);
+      if (res.ok) setResults(await res.json());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  return (
+    <div className="search-dropdown-container" ref={containerRef}>
+      <input
+        className="form-input"
+        placeholder={placeholder}
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); setIsOpen(true); }}
+        onFocus={() => setIsOpen(true)}
+      />
+      {isOpen && results.length > 0 && (
+        <div className="search-results-overlay">
+          {results.map(user => (
+            <div key={user.id} className="search-result-item" onClick={() => { onSelect(user); setQuery(''); setIsOpen(false); }}>
+              <div className="result-name">{user.name || user.email}</div>
+              <div className="result-email">{user.email}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ===== Main App =====
 function App() {
   const [token, setToken] = useState(getToken());
   const [user, setUser] = useState(null);
-  const [activeOrgId, setActiveOrgId] = useState(() => {
-    const stored = getStoredOrgId();
-    return stored ? Number(stored) : null;
+  const [activeProjectId, setActiveProjectId] = useState(() => {
+    const stored = getStoredProjectId();
+    return (stored && stored !== 'null') ? Number(stored) : null;
   });
   const [toast, setToast] = useState({ message: '', type: '' });
 
@@ -49,36 +104,30 @@ function App() {
   }, []);
   const hideToast = useCallback(() => setToast({ message: '', type: '' }), []);
 
-  // Fetch user profile
-  useEffect(() => {
-    if (isLoggedIn) {
-      apiFetch('/auth/me').then(res => {
-        if (res.ok) return res.json();
-        throw new Error('Session expired');
-      }).then(userData => {
-        setUser(userData);
-        // Auto-select org if user has exactly one, or restore stored
-        if (userData.orgs && userData.orgs.length > 0) {
-          const stored = getStoredOrgId();
-          const validStored = stored && userData.orgs.some(o => o.org_id === Number(stored));
-          if (validStored) {
-            setActiveOrgId(Number(stored));
-          } else {
-            setActiveOrgId(userData.orgs[0].org_id);
-            setStoredOrgId(userData.orgs[0].org_id);
-          }
-        } else {
-          setActiveOrgId(null);
+  const refreshUser = useCallback(() => {
+    if (!isLoggedIn) return;
+    apiFetch('/auth/me').then(res => {
+      if (res.ok) return res.json();
+      throw new Error('Session expired');
+    }).then(userData => {
+      setUser(userData);
+      const stored = getStoredProjectId();
+      if (stored && stored !== 'null') {
+        const id = Number(stored);
+        if (!userData.projects.some(p => p.project_id === id)) {
+          setActiveProjectId(null);
+          setStoredProjectId(null);
         }
-      }).catch(() => {
-        clearTokenStorage();
-        setToken(null);
-      });
-    } else {
-      setUser(null);
-      setActiveOrgId(null);
-    }
+      }
+    }).catch(() => {
+      clearTokenStorage();
+      setToken(null);
+    });
   }, [isLoggedIn]);
+
+  useEffect(() => {
+    refreshUser();
+  }, [refreshUser]);
 
   const handleLogin = (accessToken) => {
     setTokenStorage(accessToken);
@@ -89,13 +138,13 @@ function App() {
     clearTokenStorage();
     setToken(null);
     setUser(null);
-    setActiveOrgId(null);
+    setActiveProjectId(null);
     showToast('Logged out');
   };
 
-  const handleSwitchOrg = (orgId) => {
-    setActiveOrgId(orgId);
-    setStoredOrgId(orgId);
+  const handleSwitchProject = (id) => {
+    setActiveProjectId(id);
+    setStoredProjectId(id);
   };
 
   if (!isLoggedIn) {
@@ -115,36 +164,15 @@ function App() {
     );
   }
 
-  // User has no organizations
-  if (!user.orgs || user.orgs.length === 0) {
-    return (
-      <>
-        <NoOrgScreen user={user} onLogout={handleLogout} />
-        <Toast message={toast.message} type={toast.type} onClose={hideToast} />
-      </>
-    );
-  }
-
   return (
     <>
       <Dashboard
         user={user}
-        activeOrgId={activeOrgId}
-        onSwitchOrg={handleSwitchOrg}
+        activeProjectId={activeProjectId}
+        onSwitchProject={handleSwitchProject}
         onLogout={handleLogout}
         showToast={showToast}
-        refreshUser={() => {
-          apiFetch('/auth/me').then(res => res.ok ? res.json() : null).then((data) => {
-            if (data) {
-              setUser(data);
-              setActiveOrgId((current) => current || data.orgs?.[0]?.org_id || null);
-              const stored = getStoredOrgId();
-              if (!stored || !data.orgs.some(o => o.org_id === Number(stored))) {
-                setStoredOrgId(data.orgs[0].org_id);
-              }
-            }
-          });
-        }}
+        refreshUser={refreshUser}
       />
       <Toast message={toast.message} type={toast.type} onClose={hideToast} />
     </>
@@ -154,8 +182,7 @@ function App() {
 
 // ===== AUTH SCREEN =====
 function AuthScreen({ onLogin, showToast }) {
-  const [tab, setTab] = useState('login');
-  const [form, setForm] = useState({ email: '', password: '', name: '', org_name: '' });
+  const [form, setForm] = useState({ email: '', password: '' });
   const [loading, setLoading] = useState(false);
 
   const updateField = (field) => (e) => setForm(prev => ({ ...prev, [field]: e.target.value }));
@@ -164,31 +191,19 @@ function AuthScreen({ onLogin, showToast }) {
     e.preventDefault();
     setLoading(true);
 
-    let endpoint, body;
-    if (tab === 'login') {
-      endpoint = '/auth/login';
-      body = { email: form.email, password: form.password };
-    } else if (tab === 'register') {
-      endpoint = '/auth/register';
-      body = { email: form.email, password: form.password, name: form.name };
-    } else {
-      endpoint = '/auth/admin/register';
-      body = { email: form.email, password: form.password, name: form.name, org_name: form.org_name };
-    }
-
     try {
-      const res = await fetch(`${API_URL}${endpoint}`, {
+      const res = await fetch(`${API_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(form),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showToast(data.detail || 'Request failed', 'error');
+        showToast(data.detail || 'Login failed', 'error');
         return;
       }
       onLogin(data.access_token);
-      showToast(tab === 'login' ? 'Welcome back!' : 'Account created!');
+      showToast('Welcome back!');
     } catch {
       showToast('Connection error. Is backend running?', 'error');
     } finally {
@@ -202,23 +217,16 @@ function AuthScreen({ onLogin, showToast }) {
         <div className="auth-logo">
           <div className="logo-icon">🔐</div>
           <h1>Password Manager</h1>
-          <p>Secure credential management for teams</p>
+          <p>Enterprise Credential Vault</p>
         </div>
 
         <div className="auth-card">
-          <div className="auth-tabs">
-            <button className={`auth-tab ${tab === 'login' ? 'active' : ''}`} onClick={() => setTab('login')}>Login</button>
-            <button className={`auth-tab ${tab === 'register' ? 'active' : ''}`} onClick={() => setTab('register')}>Register</button>
-            <button className={`auth-tab ${tab === 'admin' ? 'active' : ''}`} onClick={() => setTab('admin')}>Admin Setup</button>
+          <div className="auth-header">
+            <h2>Log In</h2>
+            <p>Access your secure workspace</p>
           </div>
 
           <form onSubmit={handleSubmit}>
-            {(tab === 'register' || tab === 'admin') && (
-              <div className="form-group">
-                <label>Full Name</label>
-                <input className="form-input" placeholder="John Doe" value={form.name} onChange={updateField('name')} />
-              </div>
-            )}
             <div className="form-group">
               <label>Email</label>
               <input className="form-input" type="email" placeholder="you@company.com" value={form.email} onChange={updateField('email')} required />
@@ -227,47 +235,16 @@ function AuthScreen({ onLogin, showToast }) {
               <label>Password</label>
               <input className="form-input" type="password" placeholder="••••••••" value={form.password} onChange={updateField('password')} required />
             </div>
-            {tab === 'admin' && (
-              <div className="form-group">
-                <label>Organization Name</label>
-                <input className="form-input" placeholder="Acme Corp" value={form.org_name} onChange={updateField('org_name')} required />
-              </div>
-            )}
             <button className="btn btn-primary" type="submit" disabled={loading}>
-              {loading ? 'Please wait...' : tab === 'login' ? 'Sign In' : tab === 'register' ? 'Create Account' : 'Create Organization'}
+              {loading ? 'Authenticating...' : 'Sign In'}
             </button>
           </form>
-
-          {tab === 'login' && (
-            <p style={{ textAlign: 'center', marginTop: '16px', fontSize: '0.825rem', color: 'var(--text-muted)' }}>
-              Don't have an account? <button style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontWeight: 600, padding: 0, fontFamily: 'inherit', fontSize: 'inherit' }} onClick={() => setTab('register')}>Register</button>
-            </p>
-          )}
-          {tab === 'register' && (
-            <p style={{ textAlign: 'center', marginTop: '16px', fontSize: '0.825rem', color: 'var(--text-muted)' }}>
-              Want to create an organization? <button style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontWeight: 600, padding: 0, fontFamily: 'inherit', fontSize: 'inherit' }} onClick={() => setTab('admin')}>Admin Setup</button>
-            </p>
-          )}
+          
+          <p style={{ textAlign: 'center', marginTop: '24px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+            Only authorized users can access this platform.<br/>
+            Contact your administrator for credentials.
+          </p>
         </div>
-      </div>
-    </div>
-  );
-}
-
-
-// ===== NO ORG SCREEN =====
-function NoOrgScreen({ user, onLogout }) {
-  return (
-    <div className="no-org-wrapper">
-      <div className="no-org-card">
-        <div style={{ fontSize: '3rem', marginBottom: '16px' }}>⏳</div>
-        <h2>Waiting for Organization</h2>
-        <p>
-          You've registered successfully as <strong>{user.email}</strong>.<br />
-          An admin needs to add you to their organization before you can access the dashboard.
-        </p>
-        <div className="waiting-badge">⚡ Pending organization assignment</div>
-        <div><button className="btn btn-secondary" onClick={onLogout}>Logout</button></div>
       </div>
     </div>
   );
@@ -275,45 +252,53 @@ function NoOrgScreen({ user, onLogout }) {
 
 
 // ===== DASHBOARD =====
-function Dashboard({ user, activeOrgId, onSwitchOrg, onLogout, showToast, refreshUser }) {
+function Dashboard({ user, activeProjectId, onSwitchProject, onLogout, showToast, refreshUser }) {
   const [view, setView] = useState('credentials');
   const [credentials, setCredentials] = useState([]);
   const [files, setFiles] = useState([]);
-  const [users, setUsers] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [projectMembers, setProjectMembers] = useState([]);
 
-  const activeOrg = user.orgs.find(o => o.org_id === activeOrgId);
-  const isAdmin = activeOrg?.role === 'admin';
+  const activeProject = user.projects.find(p => p.project_id === activeProjectId);
+  const isProjectAdmin = activeProject?.role === 'admin';
 
   const loadCredentials = useCallback(async () => {
-    const res = await apiFetch('/credentials', {}, activeOrgId);
+    const res = await apiFetch('/credentials', {}, activeProjectId);
     if (res.ok) setCredentials(await res.json());
-  }, [activeOrgId]);
+  }, [activeProjectId]);
 
   const loadFiles = useCallback(async () => {
-    const res = await apiFetch('/files', {}, activeOrgId);
+    const res = await apiFetch('/files', {}, activeProjectId);
     if (res.ok) setFiles(await res.json());
-  }, [activeOrgId]);
+  }, [activeProjectId]);
 
-  const loadUsers = useCallback(async () => {
-    const res = await apiFetch('/users', {}, activeOrgId);
-    if (res.ok) setUsers(await res.json());
-  }, [activeOrgId]);
+  const loadProjects = useCallback(async () => {
+    const res = await apiFetch('/projects');
+    if (res.ok) setProjects(await res.json());
+  }, []);
+
+  const loadMembers = useCallback(async () => {
+    if (!activeProjectId) {
+      setProjectMembers([]);
+      return;
+    }
+    const res = await apiFetch('/users', {}, activeProjectId);
+    if (res.ok) setProjectMembers(await res.json());
+  }, [activeProjectId]);
 
   useEffect(() => {
-    if (activeOrgId) {
-      loadCredentials();
-      loadFiles();
-      loadUsers();
-    }
-  }, [activeOrgId, loadCredentials, loadFiles, loadUsers]);
+    loadCredentials();
+    loadFiles();
+    loadProjects();
+    loadMembers();
+  }, [activeProjectId, loadCredentials, loadFiles, loadProjects, loadMembers]);
 
   const tabs = [
     { key: 'credentials', label: '🔑 Credentials' },
     { key: 'files', label: '📁 Files' },
+    { key: 'projects', label: '🏗️ Projects' },
   ];
-  const canCreateOrg = user.orgs.some(o => o.role === 'admin');
-  if (canCreateOrg) tabs.push({ key: 'organizations', label: '🏢 Organizations' });
-  if (isAdmin) tabs.push({ key: 'users', label: '👥 Users' });
+  if (user.is_superadmin) tabs.push({ key: 'admin', label: '🛡️ Admin Portal' });
 
   return (
     <div className="dashboard-wrapper">
@@ -321,36 +306,29 @@ function Dashboard({ user, activeOrgId, onSwitchOrg, onLogout, showToast, refres
       <div className="topbar">
         <div className="topbar-left">
           <div className="topbar-logo">🔐</div>
-          <div className="topbar-title">Password Manager</div>
+          <div className="topbar-title">Vault</div>
         </div>
         <div className="topbar-right">
-          {/* Org Switcher */}
-          {user.orgs.length > 1 && (
-            <div className="org-switcher">
-              <select
-                className="org-select"
-                value={activeOrgId || ''}
-                onChange={(e) => onSwitchOrg(Number(e.target.value))}
-              >
-                {user.orgs.map(o => (
-                  <option key={o.org_id} value={o.org_id}>
-                    {o.org_name} ({o.role})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          {user.orgs.length === 1 && (
-            <div className="org-badge">
-              <span className="org-badge-name">{activeOrg?.org_name}</span>
-              <span className={`role-tag ${activeOrg?.role}`}>{activeOrg?.role}</span>
-            </div>
-          )}
+          <div className="org-switcher">
+            <select
+              className="org-select"
+              value={activeProjectId || 'null'}
+              onChange={(e) => onSwitchProject(e.target.value === 'null' ? null : Number(e.target.value))}
+            >
+              <option value="null">🔓 My Private Vault</option>
+              {user.projects.map(p => (
+                <option key={p.project_id} value={p.project_id}>
+                  🏢 {p.project_name}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <div className="user-badge">
             <div className="avatar">{(user.name || user.email)[0].toUpperCase()}</div>
             <div className="user-info">
               <div className="user-name">{user.name || user.email}</div>
+              {user.is_superadmin && <div style={{ fontSize: '0.65rem', color: 'var(--accent)', fontWeight: 700 }}>SUPER ADMIN</div>}
             </div>
           </div>
           <button className="btn btn-secondary btn-sm" onClick={onLogout}>Logout</button>
@@ -368,16 +346,35 @@ function Dashboard({ user, activeOrgId, onSwitchOrg, onLogout, showToast, refres
         </div>
 
         {view === 'credentials' && (
-          <CredentialsView credentials={credentials} onReload={loadCredentials} showToast={showToast} orgId={activeOrgId} users={users} />
+          <CredentialsView 
+            credentials={credentials} 
+            onReload={loadCredentials} 
+            showToast={showToast} 
+            projectId={activeProjectId} 
+            isPrivate={!activeProjectId}
+          />
         )}
         {view === 'files' && (
-          <FilesView files={files} onReload={loadFiles} showToast={showToast} orgId={activeOrgId} users={users} />
+          <FilesView 
+            files={files} 
+            onReload={loadFiles} 
+            showToast={showToast} 
+            projectId={activeProjectId} 
+            isPrivate={!activeProjectId}
+          />
         )}
-        {view === 'organizations' && canCreateOrg && (
-          <OrganizationsView user={user} showToast={showToast} refreshUser={refreshUser} />
+        {view === 'projects' && (
+          <ProjectsView 
+            projects={projects} 
+            onReload={() => { loadProjects(); refreshUser(); }} 
+            showToast={showToast}
+            activeProjectId={activeProjectId}
+            onSwitch={onSwitchProject}
+            members={projectMembers}
+          />
         )}
-        {view === 'users' && isAdmin && (
-          <UsersView users={users} currentUserId={user.id} onReload={loadUsers} showToast={showToast} orgId={activeOrgId} />
+        {view === 'admin' && user.is_superadmin && (
+          <AdminPortal showToast={showToast} />
         )}
       </div>
     </div>
@@ -386,31 +383,32 @@ function Dashboard({ user, activeOrgId, onSwitchOrg, onLogout, showToast, refres
 
 
 // ===== CREDENTIALS VIEW =====
-function CredentialsView({ credentials, onReload, showToast, orgId, users }) {
+function CredentialsView({ credentials, onReload, showToast, projectId, isPrivate }) {
   const [form, setForm] = useState({ domain: '', username: '', password: '' });
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    const res = await apiFetch('/credentials', { method: 'POST', body: JSON.stringify(form) }, orgId);
+    const body = { ...form, project_id: projectId };
+    const res = await apiFetch('/credentials', { method: 'POST', body: JSON.stringify(body) });
     if (!res.ok) { showToast('Failed to create credential', 'error'); return; }
     setForm({ domain: '', username: '', password: '' });
     await onReload();
-    showToast('Credential created');
+    showToast(`Saved to ${isPrivate ? 'Private Vault' : 'Project'}`);
   };
 
   return (
     <div className="panel-grid">
       <div className="panel">
-        <h2>➕ Add Credential</h2>
+        <h2>➕ {isPrivate ? 'Add Private Credential' : 'Add to Project'}</h2>
         <div className="divider" />
         <form onSubmit={handleCreate}>
           <div className="form-group">
-            <label>Domain / Website</label>
+            <label>Domain</label>
             <input className="form-input" placeholder="github.com" value={form.domain} onChange={e => setForm(p => ({ ...p, domain: e.target.value }))} required />
           </div>
           <div className="form-group">
             <label>Username</label>
-            <input className="form-input" placeholder="john@example.com" value={form.username} onChange={e => setForm(p => ({ ...p, username: e.target.value }))} required />
+            <input className="form-input" placeholder="user@email.com" value={form.username} onChange={e => setForm(p => ({ ...p, username: e.target.value }))} required />
           </div>
           <div className="form-group">
             <label>Password</label>
@@ -422,30 +420,17 @@ function CredentialsView({ credentials, onReload, showToast, orgId, users }) {
 
       <div className="panel">
         <div className="panel-header">
-          <h2>🔑 Stored Credentials</h2>
+          <h2>🔑 {isPrivate ? 'My Private Vault' : 'Project Credentials'}</h2>
           <button className="btn btn-secondary btn-sm" onClick={onReload}>Refresh</button>
         </div>
         <div className="item-list">
           {!credentials.length ? (
             <div className="empty-state">
-              <div className="empty-icon">🔒</div>
-              <p>No credentials stored yet</p>
+              <div className="empty-icon">{isPrivate ? '🔒' : '🏢'}</div>
+              <p>No credentials stored here</p>
             </div>
           ) : credentials.map(item => (
-            <div className="item-card" key={item.id}>
-              <div className="item-title">{item.domain}</div>
-              <div className="item-meta">User: {item.username}</div>
-              <div className="item-meta">Pass: {'•'.repeat(8)}</div>
-              <div className="item-meta">Shared: {item.shared_with.length ? item.shared_with.map(id => {
-                const u = users.find(u => u.user_id === id);
-                return u ? u.email : `#${id}`;
-              }).join(', ') : 'No one'}</div>
-              <ShareForm users={users} onShare={async (userIds) => {
-                const res = await apiFetch('/credentials/share', { method: 'POST', body: JSON.stringify({ credential_id: item.id, user_ids: userIds }) }, orgId);
-                if (res.ok) { showToast('Credential shared'); onReload(); }
-                else showToast('Share failed', 'error');
-              }} />
-            </div>
+            <CredentialCard key={item.id} item={item} showToast={showToast} />
           ))}
         </div>
       </div>
@@ -453,9 +438,41 @@ function CredentialsView({ credentials, onReload, showToast, orgId, users }) {
   );
 }
 
+function CredentialCard({ item, showToast }) {
+  const [showPassword, setShowPassword] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(item.password);
+    showToast('Password copied to clipboard');
+  };
+
+  return (
+    <div className="item-card">
+      <div className="item-card-header">
+        <div className="item-title">{item.domain}</div>
+        <div className="item-card-actions">
+          <button className="icon-btn" title={showPassword ? "Hide" : "View"} onClick={() => setShowPassword(!showPassword)}>
+            {showPassword ? '👁️‍🗨️' : '👁️'}
+          </button>
+          <button className="icon-btn" title="Copy Password" onClick={handleCopy}>
+            📋
+          </button>
+        </div>
+      </div>
+      <div className="item-meta">User: {item.username}</div>
+      <div className="item-meta">
+        Pass: <span className="password-display">{showPassword ? item.password : '••••••••'}</span>
+      </div>
+      <div className="item-footer">
+        <span className="creator-badge">👤 Created by: {item.creator_name || item.creator_email}</span>
+      </div>
+    </div>
+  );
+}
+
 
 // ===== FILES VIEW =====
-function FilesView({ files, onReload, showToast, orgId, users }) {
+function FilesView({ files, onReload, showToast, projectId, isPrivate }) {
   const [uploadFile, setUploadFile] = useState(null);
 
   const handleUpload = async (e) => {
@@ -463,7 +480,7 @@ function FilesView({ files, onReload, showToast, orgId, users }) {
     if (!uploadFile) return;
     const formData = new FormData();
     formData.append('file', uploadFile);
-    const res = await apiFetch('/files/upload', { method: 'POST', body: formData }, orgId);
+    const res = await apiFetch(`/files/upload${projectId ? `?project_id=${projectId}` : ''}`, { method: 'POST', body: formData });
     if (!res.ok) { showToast('Upload failed', 'error'); return; }
     setUploadFile(null);
     await onReload();
@@ -473,7 +490,7 @@ function FilesView({ files, onReload, showToast, orgId, users }) {
   return (
     <div className="panel-grid">
       <div className="panel">
-        <h2>📤 Upload File</h2>
+        <h2>📤 {isPrivate ? 'Upload Private' : 'Upload to Project'}</h2>
         <div className="divider" />
         <form onSubmit={handleUpload}>
           <div className="form-group">
@@ -486,14 +503,14 @@ function FilesView({ files, onReload, showToast, orgId, users }) {
 
       <div className="panel">
         <div className="panel-header">
-          <h2>📁 Files</h2>
+          <h2>📁 {isPrivate ? 'My Private Files' : 'Project Files'}</h2>
           <button className="btn btn-secondary btn-sm" onClick={onReload}>Refresh</button>
         </div>
         <div className="item-list">
           {!files.length ? (
             <div className="empty-state">
               <div className="empty-icon">📂</div>
-              <p>No files uploaded yet</p>
+              <p>No files yet</p>
             </div>
           ) : files.map(item => (
             <div className="item-card" key={item.id}>
@@ -501,188 +518,8 @@ function FilesView({ files, onReload, showToast, orgId, users }) {
               <div className="item-meta">
                 <a href={`${API_URL}${item.storage_url}`} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>Download</a>
               </div>
-              <div className="item-meta">Shared: {item.shared_with.length ? item.shared_with.map(id => {
-                const u = users.find(u => u.user_id === id);
-                return u ? u.email : `#${id}`;
-              }).join(', ') : 'No one'}</div>
-              <ShareForm users={users} onShare={async (userIds) => {
-                const res = await apiFetch('/files/share', { method: 'POST', body: JSON.stringify({ file_id: item.id, user_ids: userIds }) }, orgId);
-                if (res.ok) { showToast('File shared'); onReload(); }
-                else showToast('Share failed', 'error');
-              }} />
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-// ===== ORGANIZATIONS VIEW =====
-function OrganizationsView({ user, showToast, refreshUser }) {
-  const [orgName, setOrgName] = useState('');
-
-  const canCreateOrg = user.orgs.some(o => o.role === 'admin');
-
-  const handleCreateOrg = async (e) => {
-    e.preventDefault();
-    if (!orgName.trim()) {
-      showToast('Organization name is required', 'error');
-      return;
-    }
-    const res = await apiFetch('/orgs', { method: 'POST', body: JSON.stringify({ name: orgName.trim() }) });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      showToast(data.detail || 'Failed to create organization', 'error');
-      return;
-    }
-    setOrgName('');
-    await refreshUser();
-    showToast('Organization created');
-  };
-
-  return (
-    <div className="panel-grid">
-      <div className="panel">
-        <h2>🏢 Your Organizations</h2>
-        <div className="divider" />
-        <div className="item-list">
-          {user.orgs.map(org => (
-            <div className="item-card" key={org.org_id}>
-              <div className="item-title">{org.org_name}</div>
-              <div className="item-meta">Role: {org.role}</div>
-              <div className="item-meta">Org ID: {org.org_id}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {canCreateOrg && (
-        <div className="panel">
-          <h2>➕ Create New Organization</h2>
-          <div className="divider" />
-          <form onSubmit={handleCreateOrg}>
-            <div className="form-group">
-              <label>Organization Name</label>
-              <input className="form-input" placeholder="New org name" value={orgName} onChange={e => setOrgName(e.target.value)} required />
-            </div>
-            <button className="btn btn-primary" type="submit">Create Organization</button>
-          </form>
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-// ===== USERS VIEW (Admin Only) =====
-function UsersView({ users, currentUserId, onReload, showToast, orgId }) {
-  const [addMode, setAddMode] = useState('existing');
-  const [existingEmail, setExistingEmail] = useState('');
-  const [existingRole, setExistingRole] = useState('user');
-  const [newUser, setNewUser] = useState({ email: '', password: '', role: 'user' });
-
-  const handleAddExisting = async (e) => {
-    e.preventDefault();
-    const res = await apiFetch('/users/add-to-org', { method: 'POST', body: JSON.stringify({ email: existingEmail, role: existingRole }) }, orgId);
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { showToast(data.detail || 'Failed to add user', 'error'); return; }
-    setExistingEmail('');
-    setExistingRole('user');
-    await onReload();
-    showToast('User added to organization');
-  };
-
-  const handleCreateNew = async (e) => {
-    e.preventDefault();
-    const res = await apiFetch('/users', { method: 'POST', body: JSON.stringify(newUser) }, orgId);
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { showToast(data.detail || 'Failed to create user', 'error'); return; }
-    setNewUser({ email: '', password: '', role: 'user' });
-    await onReload();
-    showToast('User created and added');
-  };
-
-  const handleRemove = async (membershipId) => {
-    if (!confirm('Remove this user from the organization?')) return;
-    const res = await apiFetch(`/users/${membershipId}`, { method: 'DELETE' }, orgId);
-    if (res.ok) { showToast('User removed'); onReload(); }
-    else showToast('Failed to remove user', 'error');
-  };
-
-  return (
-    <div className="panel-grid">
-      <div className="panel">
-        <h2>👥 Add User to Organization</h2>
-        <div className="divider" />
-        <div className="auth-tabs" style={{ marginBottom: '20px' }}>
-          <button className={`auth-tab ${addMode === 'existing' ? 'active' : ''}`} onClick={() => setAddMode('existing')}>Add Existing</button>
-          <button className={`auth-tab ${addMode === 'new' ? 'active' : ''}`} onClick={() => setAddMode('new')}>Create New</button>
-        </div>
-
-        {addMode === 'existing' ? (
-          <form onSubmit={handleAddExisting}>
-            <div className="form-group">
-              <label>User Email</label>
-              <input className="form-input" type="email" placeholder="user@example.com" value={existingEmail} onChange={e => setExistingEmail(e.target.value)} required />
-            </div>
-            <div className="form-group">
-              <label>Role</label>
-              <select className="form-input" value={existingRole} onChange={e => setExistingRole(e.target.value)}>
-                <option value="user">User</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-            <button className="btn btn-primary" type="submit">Add to Organization</button>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '12px' }}>
-              💡 The user must have registered first. Enter their email to add them.
-            </p>
-          </form>
-        ) : (
-          <form onSubmit={handleCreateNew}>
-            <div className="form-group">
-              <label>Email</label>
-              <input className="form-input" type="email" placeholder="newuser@example.com" value={newUser.email} onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} required />
-            </div>
-            <div className="form-group">
-              <label>Password</label>
-              <input className="form-input" type="password" placeholder="••••••••" value={newUser.password} onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))} required />
-            </div>
-            <div className="form-group">
-              <label>Role</label>
-              <select className="form-input" value={newUser.role} onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))}>
-                <option value="user">User</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-            <button className="btn btn-primary" type="submit">Create & Add User</button>
-          </form>
-        )}
-      </div>
-
-      <div className="panel">
-        <div className="panel-header">
-          <h2>🏢 Organization Members</h2>
-          <button className="btn btn-secondary btn-sm" onClick={onReload}>Refresh</button>
-        </div>
-        <div className="item-list">
-          {!users.length ? (
-            <div className="empty-state">
-              <div className="empty-icon">👤</div>
-              <p>No members yet</p>
-            </div>
-          ) : users.map(u => (
-            <div className="item-card" key={u.id}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <div className="item-title">{u.name || u.email}</div>
-                  <div className="item-meta">{u.email}</div>
-                  <span className={`role-tag ${u.role}`}>{u.role}</span>
-                </div>
-                {u.user_id !== currentUserId && (
-                  <button className="btn btn-danger btn-sm" onClick={() => handleRemove(u.id)}>Remove</button>
-                )}
+              <div className="item-footer">
+                <span className="creator-badge">👤 Created by: {item.creator_name || item.creator_email}</span>
               </div>
             </div>
           ))}
@@ -693,52 +530,155 @@ function UsersView({ users, currentUserId, onReload, showToast, orgId }) {
 }
 
 
-// ===== SHARE FORM =====
-function ShareForm({ users, onShare }) {
-  const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState([]);
+// ===== PROJECTS VIEW =====
+function ProjectsView({ projects, onReload, showToast, activeProjectId, onSwitch, members }) {
+  const [newProjName, setNewProjName] = useState('');
+  const [selectedUser, setSelectedUser] = useState(null);
 
-  const candidates = (users || [])
-    .filter(user => !selected.some(sel => sel.user_id === user.user_id))
-    .filter(user => {
-      const term = search.toLowerCase();
-      return !term || (user.email && user.email.toLowerCase().includes(term)) || (user.name && user.name.toLowerCase().includes(term));
-    });
+  const activeProject = projects.find(p => p.project_id === activeProjectId);
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    const res = await apiFetch('/projects', { method: 'POST', body: JSON.stringify({ name: newProjName }) });
+    if (res.ok) {
+      setNewProjName('');
+      onReload();
+      showToast('Project created');
+    } else {
+      showToast('Failed to create project', 'error');
+    }
+  };
+
+  const handleInvite = async () => {
+    if (!selectedUser) return;
+    const res = await apiFetch('/users/add-to-project', { method: 'POST', body: JSON.stringify({ email: selectedUser.email, role: 'user' }) }, activeProjectId);
+    if (res.ok) {
+      setSelectedUser(null);
+      showToast('User added to project');
+      onReload();
+    } else {
+      const data = await res.json();
+      showToast(data.detail || 'Invite failed', 'error');
+    }
+  };
 
   return (
-    <form className="inline-form" onSubmit={(e) => {
-      e.preventDefault();
-      const userIds = selected.map(u => u.user_id);
-      if (userIds.length) { onShare(userIds); setSelected([]); setSearch(''); }
-    }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <input className="form-input" placeholder="Search members to share with" value={search} onChange={(e) => setSearch(e.target.value)} />
-          <button className="btn btn-success btn-sm" type="submit" disabled={!selected.length}>Share</button>
-        </div>
-        {selected.length > 0 && (
-          <div className="share-selected-list">
-            {selected.map(user => (
-              <span className="share-chip" key={user.user_id}>
-                {user.name || user.email}
-                <button type="button" onClick={() => setSelected(prev => prev.filter(u => u.user_id !== user.user_id))}>×</button>
-              </span>
-            ))}
+    <div className="panel-grid">
+      <div className="panel">
+        <h2>🏗️ Project Management</h2>
+        <div className="divider" />
+        <form onSubmit={handleCreate}>
+          <div className="form-group">
+            <label>Create New Project</label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input className="form-input" placeholder="e.g. Marketing Team" value={newProjName} onChange={e => setNewProjName(e.target.value)} required />
+              <button className="btn btn-primary" type="submit">Create</button>
+            </div>
           </div>
-        )}
-        {search && candidates.length > 0 && (
-          <div className="share-suggestions">
-            {candidates.slice(0, 6).map(user => (
-              <button key={user.user_id} type="button" className="share-suggestion" onClick={() => { setSelected(prev => [...prev, user]); setSearch(''); }}>
-                {user.name ? `${user.name} — ${user.email}` : user.email}
-              </button>
-            ))}
+        </form>
+        
+        <h3 style={{ marginTop: '32px', fontSize: '0.9rem' }}>📁 Your Projects</h3>
+        <div className="item-list" style={{ marginTop: '12px' }}>
+          {projects.map(p => (
+            <div className={`item-card ${activeProjectId === p.project_id ? 'active-border' : ''}`} key={p.project_id} style={{ cursor: 'pointer' }} onClick={() => onSwitch(p.project_id)}>
+              <div className="item-title">{p.project_name}</div>
+              <div className="item-meta">Role: {p.role}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="panel">
+        {activeProject ? (
+          <>
+            <div className="panel-header">
+              <h2>👥 Members: {activeProject.project_name}</h2>
+              {activeProject.role === 'admin' && <span className="role-tag admin">Owner</span>}
+            </div>
+            <div className="divider" />
+            
+            {activeProject.role === 'admin' && (
+              <div className="invite-section" style={{ marginBottom: '24px' }}>
+                <label className="form-label">Search & Invite Members</label>
+                <div className="invite-controls">
+                  <UserSearchDropdown onSelect={setSelectedUser} placeholder="Search by name or email..." />
+                  <button className="btn btn-success" onClick={handleInvite} disabled={!selectedUser}>Invite</button>
+                </div>
+                {selectedUser && (
+                  <div className="selected-user-preview">
+                    Selected: <strong>{selectedUser.name || selectedUser.email}</strong>
+                    <button className="btn-clear" onClick={() => setSelectedUser(null)}>×</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="item-list">
+              {members.map(m => (
+                <div className="item-card" key={m.id}>
+                  <div className="item-title">{m.name || m.email}</div>
+                  <div className="item-meta">{m.email}</div>
+                  <span className={`role-tag ${m.role}`}>{m.role}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="empty-state">
+            <div className="empty-icon">📁</div>
+            <p>Select a project to manage its members</p>
           </div>
         )}
       </div>
-    </form>
+    </div>
   );
 }
 
+
+// ===== ADMIN PORTAL =====
+function AdminPortal({ showToast }) {
+  const [form, setForm] = useState({ email: '', password: '', name: '', is_superadmin: false });
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    const res = await apiFetch('/users/register', { method: 'POST', body: JSON.stringify(form) });
+    if (res.ok) {
+      setForm({ email: '', password: '', name: '', is_superadmin: false });
+      showToast('User registered successfully');
+    } else {
+      const data = await res.json();
+      showToast(data.detail || 'Registration failed', 'error');
+    }
+  };
+
+  return (
+    <div className="panel" style={{ maxWidth: '600px', margin: '0 auto' }}>
+      <h2>🛡️ Admin: User Registration</h2>
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '24px' }}>
+        Create new platform accounts.
+      </p>
+      <div className="divider" />
+      <form onSubmit={handleCreate}>
+        <div className="form-group">
+          <label>Full Name</label>
+          <input className="form-input" placeholder="John Doe" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} />
+        </div>
+        <div className="form-group">
+          <label>Email Address</label>
+          <input className="form-input" type="email" placeholder="user@company.com" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} required />
+        </div>
+        <div className="form-group">
+          <label>Initial Password</label>
+          <input className="form-input" type="password" placeholder="••••••••" value={form.password} onChange={e => setForm(p => ({ ...p, password: e.target.value }))} required />
+        </div>
+        <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: '10px', marginTop: '12px' }}>
+          <input type="checkbox" checked={form.is_superadmin} onChange={e => setForm(p => ({ ...p, is_superadmin: e.target.checked }))} />
+          <label style={{ margin: 0, fontWeight: 500 }}>Grant Super Admin Privileges</label>
+        </div>
+        <button className="btn btn-primary" type="submit" style={{ marginTop: '20px' }}>Register Account</button>
+      </form>
+    </div>
+  );
+}
 
 export default App;

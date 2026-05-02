@@ -16,12 +16,6 @@ class RegisterRequest(BaseModel):
     password: str
     name: Optional[str] = None
 
-class AdminRegisterRequest(BaseModel):
-    email: EmailStr
-    password: str
-    name: Optional[str] = None
-    org_name: str
-
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
@@ -33,37 +27,38 @@ class UserResponse(BaseModel):
     email: str
     name: Optional[str] = None
     is_active: bool
+    is_superadmin: bool
 
     class Config:
         from_attributes = True
 
-class UserWithOrgsResponse(UserResponse):
-    """User profile with all their organization memberships."""
-    orgs: List["OrgMembershipResponse"] = []
+class UserWithProjectsResponse(UserResponse):
+    """User profile with all their project memberships."""
+    projects: List["ProjectMembershipResponse"] = []
 
 
-# --- Organization ---
-class OrganizationCreate(BaseModel):
+# --- Project ---
+class ProjectCreate(BaseModel):
     name: str
 
-class OrganizationResponse(BaseModel):
+class ProjectResponse(BaseModel):
     id: int
     name: str
 
     class Config:
         from_attributes = True
 
-class OrgMembershipResponse(BaseModel):
+class ProjectMembershipResponse(BaseModel):
     id: int
-    org_id: int
-    org_name: str
+    project_id: int
+    project_name: str
     role: str
 
     class Config:
         from_attributes = True
 
-class OrgMemberResponse(BaseModel):
-    """A member within an organization."""
+class ProjectMemberResponse(BaseModel):
+    """A member within a project."""
     id: int
     user_id: int
     email: str
@@ -75,14 +70,15 @@ class OrgMemberResponse(BaseModel):
 
 
 # --- Admin actions ---
-class AddUserToOrgRequest(BaseModel):
+class AddUserToProjectRequest(BaseModel):
     email: EmailStr
     role: Optional[str] = "user"
 
-class CreateUserInOrgRequest(BaseModel):
+class CreateUserRequest(BaseModel):
     email: EmailStr
     password: str
-    role: Optional[str] = "user"
+    name: Optional[str] = None
+    is_superadmin: Optional[bool] = False
 
 
 # --- Credential ---
@@ -90,6 +86,7 @@ class CredentialCreate(BaseModel):
     domain: str
     username: str
     password: str
+    project_id: Optional[int] = None
 
 class CredentialShare(BaseModel):
     credential_id: int
@@ -98,11 +95,13 @@ class CredentialShare(BaseModel):
 
 class CredentialResponse(BaseModel):
     id: int
-    org_id: int
+    project_id: Optional[int]
     domain: str
     username: str
     password: str
     created_by: Optional[int]
+    creator_name: Optional[str] = None
+    creator_email: Optional[str] = None
     shared_with: List[int] = []
 
     class Config:
@@ -117,11 +116,21 @@ class FileShare(BaseModel):
 
 class FileResponse(BaseModel):
     id: int
-    org_id: int
+    project_id: Optional[int]
     file_name: str
     storage_url: str
     created_by: Optional[int]
+    creator_name: Optional[str] = None
+    creator_email: Optional[str] = None
     shared_with: List[int] = []
+
+    class Config:
+        from_attributes = True
+
+class UserSearchResponse(BaseModel):
+    id: int
+    email: str
+    name: Optional[str] = None
 
     class Config:
         from_attributes = True

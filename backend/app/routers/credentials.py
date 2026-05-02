@@ -10,43 +10,41 @@ router = APIRouter(prefix="/credentials", tags=["credentials"])
 
 @router.get("/", response_model=List[schemas.CredentialResponse])
 def list_credentials(
-    membership: models.OrgMembership = Depends(get_active_membership),
+    membership: models.ProjectMembership = Depends(get_active_membership),
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List credentials in the active org: owned by me + shared with me."""
-    owned = db.query(models.Credential).filter(
-        models.Credential.org_id == membership.org_id,
-        models.Credential.created_by == current_user.id,
-    )
-    shared = (
-        db.query(models.Credential)
-        .join(models.CredentialPermission)
-        .filter(
-            models.Credential.org_id == membership.org_id,
-            models.CredentialPermission.user_id == current_user.id,
-        )
-    )
-
-    # Admins see all credentials in the org
-    if membership.role == "admin":
+    """
+    List credentials:
+    1. If X-Project-Id is provided: Show all project credentials.
+    2. If no Project-Id: Show private credentials (owned by user with project_id=null).
+    """
+    if membership:
+        # User is viewing a project. Show all credentials in that project.
         results = db.query(models.Credential).filter(
-            models.Credential.org_id == membership.org_id
+            models.Credential.project_id == membership.project_id
         ).all()
     else:
-        results = owned.union(shared).all()
+        # User is viewing "My Vault" (Private).
+        results = db.query(models.Credential).filter(
+            models.Credential.project_id == None,
+            models.Credential.created_by == current_user.id
+        ).all()
 
     credentials = []
     for credential in results:
         shared_with = [perm.user_id for perm in credential.permissions]
+        creator = db.query(models.User).filter(models.User.id == credential.created_by).first()
         credentials.append(
             schemas.CredentialResponse(
                 id=credential.id,
-                org_id=credential.org_id,
+                project_id=credential.project_id,
                 domain=credential.domain,
                 username=credential.username,
                 password=credential.password,
                 created_by=credential.created_by,
+                creator_name=creator.name if creator else "Unknown",
+                creator_email=creator.email if creator else "Unknown",
                 shared_with=shared_with,
             )
         )
@@ -56,12 +54,20 @@ def list_credentials(
 @router.post("/", response_model=schemas.CredentialResponse)
 def create_credential(
     request: schemas.CredentialCreate,
-    membership: models.OrgMembership = Depends(get_active_membership),
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Validation: If project_id is provided, check membership
+    if request.project_id:
+        membership = db.query(models.ProjectMembership).filter(
+            models.ProjectMembership.user_id == current_user.id,
+            models.ProjectMembership.project_id == request.project_id
+        ).first()
+        if not membership:
+            raise HTTPException(status_code=403, detail="Not a member of that project")
+
     credential = models.Credential(
-        org_id=membership.org_id,
+        project_id=request.project_id,
         domain=request.domain,
         username=request.username,
         password=request.password,
@@ -70,13 +76,16 @@ def create_credential(
     db.add(credential)
     db.commit()
     db.refresh(credential)
+    
     return schemas.CredentialResponse(
         id=credential.id,
-        org_id=credential.org_id,
+        project_id=credential.project_id,
         domain=credential.domain,
         username=credential.username,
         password=credential.password,
         created_by=credential.created_by,
+        creator_name=current_user.name,
+        creator_email=current_user.email,
         shared_with=[],
     )
 
@@ -84,29 +93,17 @@ def create_credential(
 @router.post("/share", response_model=schemas.Message)
 def share_credential(
     request: schemas.CredentialShare,
-    membership: models.OrgMembership = Depends(get_active_membership),
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    credential = db.query(models.Credential).filter(
-        models.Credential.id == request.credential_id,
-        models.Credential.org_id == membership.org_id,
-    ).first()
+    credential = db.query(models.Credential).filter(models.Credential.id == request.credential_id).first()
     if not credential:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credential not found")
-    if credential.created_by != current_user.id and membership.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No permission to share this credential")
+        raise HTTPException(status_code=404, detail="Credential not found")
+    
+    if credential.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="Only owner can share")
 
-    # Only share with users who are members of this org
-    org_user_ids = [
-        m.user_id for m in
-        db.query(models.OrgMembership).filter(models.OrgMembership.org_id == membership.org_id).all()
-    ]
-    valid_ids = [uid for uid in request.user_ids if uid in org_user_ids]
-    if not valid_ids:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid org members found")
-
-    for uid in valid_ids:
+    for uid in request.user_ids:
         existing = (
             db.query(models.CredentialPermission)
             .filter(models.CredentialPermission.credential_id == credential.id, models.CredentialPermission.user_id == uid)

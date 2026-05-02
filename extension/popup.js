@@ -1,141 +1,130 @@
 const API_URL = 'http://localhost:8000';
 
-document.addEventListener('DOMContentLoaded', async () => {
-  const loginView = document.getElementById('login-view');
-  const vaultView = document.getElementById('vault-view');
-  const emailInput = document.getElementById('email');
-  const passwordInput = document.getElementById('password');
-  const loginBtn = document.getElementById('login-btn');
-  const logoutBtn = document.getElementById('logout-btn');
-  const refreshBtn = document.getElementById('refresh-btn');
-  const itemsContainer = document.getElementById('items-container');
-  const userDisplay = document.getElementById('user-display');
-  const loginError = document.getElementById('login-error');
+const views = {
+  login: document.getElementById('view-login'),
+  vault: document.getElementById('view-vault')
+};
 
-  // Check if token exists
-  const checkAuth = async () => {
-    const { token, email } = await chrome.storage.local.get(['token', 'email']);
-    if (token) {
-      showVault(email);
-      fetchVault(token);
-    } else {
-      showLogin();
-    }
-  };
+const elements = {
+  emailInput: document.getElementById('login-email'),
+  passInput: document.getElementById('login-pass'),
+  btnLogin: document.getElementById('btn-login'),
+  btnLogout: document.getElementById('btn-logout'),
+  statusUser: document.getElementById('status-user'),
+  projectSelect: document.getElementById('project-select'),
+  listCredentials: document.getElementById('list-credentials')
+};
 
-  const showLogin = () => {
-    loginView.classList.remove('hidden');
-    vaultView.classList.add('hidden');
-  };
+function switchView(viewName) {
+  Object.values(views).forEach(v => v.classList.remove('active'));
+  views[viewName].classList.add('active');
+}
 
-  const showVault = (email) => {
-    loginView.classList.add('hidden');
-    vaultView.classList.remove('hidden');
-    userDisplay.textContent = email;
-  };
+async function apiFetch(path, options = {}, projectId = null) {
+  const { token } = await chrome.storage.local.get('token');
+  const headers = { ...options.headers };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (projectId && projectId !== 'null') headers['X-Project-Id'] = projectId;
+  if (!options.body || typeof options.body === 'string') {
+    headers['Content-Type'] = 'application/json';
+  }
 
-  const fetchVault = async (token) => {
-    try {
-      const response = await fetch(`${API_URL}/vault`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+  return fetch(`${API_URL}${path}`, { ...options, headers });
+}
+
+async function loadVault() {
+  const { activeProjectId } = await chrome.storage.local.get('activeProjectId');
+  const res = await apiFetch('/credentials', {}, activeProjectId);
+  if (!res.ok) return;
+
+  const credentials = await res.json();
+  elements.listCredentials.innerHTML = '';
+  
+  if (credentials.length === 0) {
+    elements.listCredentials.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">No credentials found</div>';
+    return;
+  }
+
+  credentials.forEach(cred => {
+    const div = document.createElement('div');
+    div.className = 'credential-item';
+    div.innerHTML = `
+      <div class="item-domain">${cred.domain}</div>
+      <div class="item-user">${cred.username}</div>
+    `;
+    div.onclick = () => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'AUTOFILL', credential: cred });
       });
-      if (response.ok) {
-        const items = await response.json();
-        renderItems(items);
-      } else {
-        throw new Error('Failed to fetch vault');
-      }
-    } catch (err) {
-      console.error(err);
-      itemsContainer.innerHTML = '<div class="error">Error loading vault. Is backend running?</div>';
-    }
-  };
+    };
+    elements.listCredentials.appendChild(div);
+  });
+}
 
-  const renderItems = (items) => {
-    itemsContainer.innerHTML = '';
-    if (items.length === 0) {
-      itemsContainer.innerHTML = '<div style="text-align: center; color: #64748b;">No items found</div>';
-      return;
-    }
-    items.forEach(item => {
-      const div = document.createElement('div');
-      div.className = 'vault-item';
-      
-      // For MVP, we assume encrypted_data is "username:password"
-      // In real zero-knowledge, decryption happens here using a user key
-      const [username, password] = item.encrypted_data.split(':');
-
-      div.innerHTML = `
-        <span>${item.title}</span>
-        <button class="autofill-btn" data-username="${username}" data-password="${password}">Autofill</button>
-      `;
-      itemsContainer.appendChild(div);
-    });
-
-    // Add listeners to autofill buttons
-    document.querySelectorAll('.autofill-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const { username, password } = btn.dataset;
-        triggerAutofill(username, password);
-      });
-    });
-  };
-
-  const triggerAutofill = async (username, password) => {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab) return;
-
-    chrome.tabs.sendMessage(tab.id, {
-      action: 'AUTOFILL',
-      data: { username, password }
-    }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.error(chrome.runtime.lastError);
-        alert('Could not autofill. Please refresh the page and try again.');
-      }
-    });
-  };
-
-  loginBtn.addEventListener('click', async () => {
-    const email = emailInput.value;
-    const password = passwordInput.value;
-    loginError.classList.add('hidden');
-
-    const formData = new FormData();
-    formData.append('username', email);
-    formData.append('password', password);
-
-    try {
-      const response = await fetch(`${API_URL}/auth/login`, {
-        method: 'POST',
-        body: formData
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        await chrome.storage.local.set({ token: data.access_token, email });
-        showVault(email);
-        fetchVault(data.access_token);
-      } else {
-        const err = await response.json();
-        loginError.textContent = err.detail || 'Login failed';
-        loginError.classList.remove('hidden');
-      }
-    } catch (err) {
-      loginError.textContent = 'Connection error. Is backend running?';
-      loginError.classList.remove('hidden');
-    }
+async function loadProjects(user) {
+  elements.projectSelect.innerHTML = '<option value="null">🔓 My Private Vault</option>';
+  user.projects.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.project_id;
+    opt.textContent = `🏢 ${p.project_name}`;
+    elements.projectSelect.appendChild(opt);
   });
 
-  logoutBtn.addEventListener('click', async () => {
-    await chrome.storage.local.clear();
-    showLogin();
+  const { activeProjectId } = await chrome.storage.local.get('activeProjectId');
+  if (activeProjectId) elements.projectSelect.value = activeProjectId;
+}
+
+async function checkAuth() {
+  const { token } = await chrome.storage.local.get('token');
+  if (!token) {
+    switchView('login');
+    elements.statusUser.textContent = 'Not logged in';
+    elements.btnLogout.style.display = 'none';
+    return;
+  }
+
+  const res = await apiFetch('/auth/me');
+  if (res.ok) {
+    const user = await res.json();
+    elements.statusUser.textContent = user.name || user.email;
+    elements.btnLogout.style.display = 'inline';
+    await loadProjects(user);
+    await loadVault();
+    switchView('vault');
+  } else {
+    chrome.storage.local.remove(['token', 'activeProjectId']);
+    switchView('login');
+  }
+}
+
+elements.btnLogin.onclick = async () => {
+  const email = elements.emailInput.value;
+  const password = elements.passInput.value;
+
+  const res = await fetch(`${API_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
   });
 
-  refreshBtn.addEventListener('click', async () => {
-    const { token } = await chrome.storage.local.get('token');
-    if (token) fetchVault(token);
-  });
+  if (res.ok) {
+    const { access_token } = await res.json();
+    await chrome.storage.local.set({ token: access_token });
+    checkAuth();
+  } else {
+    alert('Login failed');
+  }
+};
 
+elements.btnLogout.onclick = async () => {
+  await chrome.storage.local.remove(['token', 'activeProjectId']);
   checkAuth();
-});
+};
+
+elements.projectSelect.onchange = async () => {
+  const id = elements.projectSelect.value;
+  await chrome.storage.local.set({ activeProjectId: id });
+  loadVault();
+};
+
+document.addEventListener('DOMContentLoaded', checkAuth);
