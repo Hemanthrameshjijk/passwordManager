@@ -1,0 +1,27 @@
+"""A generic, single generated migration.
+
+Revision ID: ${up_revision}
+Revises: ${down_revision | comma,n}
+Create Date: ${create_date}
+"""
+
+from alembic import op
+import sqlalchemy as sa
+
+# revision identifiers, used by Alembic.
+revision = ${repr(up_revision)}
+down_revision = ${repr(down_revision)}
+branch_labels = ${repr(branch_labels)}
+depends_on = ${repr(depends_on)}
+
+
+def upgrade():
+% for op in upgrade_ops:
+    ${op}
+% endfor
+
+
+def downgrade():
+% for op in downgrade_ops:
+    ${op}
+% endfor

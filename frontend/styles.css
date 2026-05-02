@@ -1,0 +1,115 @@
+:root {
+  --bg: #111827;
+  --card: #1f2937;
+  --text: #f8fafc;
+  --muted: #9ca3af;
+  --accent: #38bdf8;
+  --danger: #fb7185;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, system-ui, sans-serif;
+  background: radial-gradient(circle at top, #0f172a, #020617 60%);
+  color: var(--text);
+}
+
+.app-shell {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+h1, h2, h3 {
+  margin: 0 0 12px;
+}
+
+.card, .panel {
+  background: var(--card);
+  padding: 20px;
+  border-radius: 16px;
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.35);
+}
+
+form {
+  display: grid;
+  gap: 12px;
+}
+
+input, select, button {
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #0f172a;
+  color: var(--text);
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: var(--accent);
+  color: #020617;
+  font-weight: 700;
+}
+
+button:hover {
+  opacity: 0.95;
+}
+
+.tabs {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.tabs button {
+  flex: 1;
+  background: #111827;
+}
+
+.tabs button.active {
+  background: var(--accent);
+  color: #020617;
+}
+
+.list {
+  display: grid;
+  gap: 14px;
+}
+
+.card, .view {
+  margin-bottom: 20px;
+}
+
+.item {
+  border: 1px solid #334155;
+  padding: 14px;
+  border-radius: 12px;
+  background: #0b1120;
+}
+
+.item p {
+  margin: 6px 0;
+  color: var(--muted);
+}
+
+.item button {
+  margin-top: 10px;
+}
+
+.notification {
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 20px;
+  background: rgba(56, 189, 248, 0.14);
+  border: 1px solid rgba(56, 189, 248, 0.32);
+}
+
+.hidden { display: none; }

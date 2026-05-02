@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Zero-Knowledge Access Control",
+  "version": "1.0",
+  "description": "Securely autofill credentials without exposing passwords.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://localhost:8000/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ]
+}
