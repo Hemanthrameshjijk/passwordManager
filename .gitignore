@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -9,3 +10,18 @@ venv/
 .env.*
 *.db
 uploads/
+
+# Node
+node_modules/
+dist/
+.DS_Store
+.vscode/
+.idea/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.parcel-cache
+.cache
+.next
+.nuxt
+build/
