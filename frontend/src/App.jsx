@@ -267,8 +267,9 @@ function Dashboard({ user, activeProjectId, onSwitchProject, onLogout, showToast
     if (res.ok) setCredentials(await res.json());
   }, [activeProjectId]);
 
-  const loadFiles = useCallback(async () => {
-    const res = await apiFetch('/files', {}, activeProjectId);
+  const loadFiles = useCallback(async (search = '') => {
+    const path = `/files${search ? `?q=${encodeURIComponent(search)}` : ''}`;
+    const res = await apiFetch(path, {}, activeProjectId);
     if (res.ok) setFiles(await res.json());
   }, [activeProjectId]);
 
@@ -474,17 +475,58 @@ function CredentialCard({ item, showToast }) {
 // ===== FILES VIEW =====
 function FilesView({ files, onReload, showToast, projectId, isPrivate }) {
   const [uploadFile, setUploadFile] = useState(null);
+  const [uploadTag, setUploadTag] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [existingTags, setExistingTags] = useState([]);
+
+  const loadTags = useCallback(async () => {
+    const res = await apiFetch('/files/tags', {}, projectId);
+    if (res.ok) setExistingTags(await res.json());
+  }, [projectId]);
+
+  useEffect(() => {
+    loadTags();
+  }, [loadTags]);
+
+  const handleSearchChange = (e) => {
+    const val = e.target.value;
+    setSearchQuery(val);
+    onReload(val); // This calls loadFiles(val) from Dashboard
+  };
 
   const handleUpload = async (e) => {
     e.preventDefault();
     if (!uploadFile) return;
     const formData = new FormData();
     formData.append('file', uploadFile);
-    const res = await apiFetch(`/files/upload${projectId ? `?project_id=${projectId}` : ''}`, { method: 'POST', body: formData });
+    if (uploadTag) formData.append('tag', uploadTag);
+    if (projectId) formData.append('project_id', projectId);
+
+    const res = await apiFetch('/files/upload', { method: 'POST', body: formData });
     if (!res.ok) { showToast('Upload failed', 'error'); return; }
     setUploadFile(null);
-    await onReload();
+    setUploadTag('');
+    await onReload(searchQuery);
+    await loadTags();
     showToast('File uploaded');
+  };
+
+  const handleUpdateTag = async (fileId, currentTag) => {
+    const newTag = prompt('Enter new tag:', currentTag || '');
+    if (newTag === null) return;
+    
+    const res = await apiFetch(`/files/${fileId}/tag`, { 
+      method: 'PATCH', 
+      body: JSON.stringify({ tag: newTag }) 
+    });
+    
+    if (res.ok) {
+      showToast('Tag updated');
+      onReload(searchQuery);
+      loadTags();
+    } else {
+      showToast('Failed to update tag', 'error');
+    }
   };
 
   return (
@@ -497,6 +539,21 @@ function FilesView({ files, onReload, showToast, projectId, isPrivate }) {
             <label>Select File</label>
             <input className="form-input" type="file" onChange={e => setUploadFile(e.target.files?.[0] ?? null)} required />
           </div>
+          <div className="form-group">
+            <label>Tag (Optional)</label>
+            <input 
+              className="form-input" 
+              placeholder="e.g. v1, Draft, Final" 
+              value={uploadTag} 
+              onChange={e => setUploadTag(e.target.value)} 
+              list="existing-tags"
+            />
+            <datalist id="existing-tags">
+              {existingTags.map(tag => (
+                <option key={tag} value={tag} />
+              ))}
+            </datalist>
+          </div>
           <button className="btn btn-primary" type="submit">Upload</button>
         </form>
       </div>
@@ -504,7 +561,16 @@ function FilesView({ files, onReload, showToast, projectId, isPrivate }) {
       <div className="panel">
         <div className="panel-header">
           <h2>📁 {isPrivate ? 'My Private Files' : 'Project Files'}</h2>
-          <button className="btn btn-secondary btn-sm" onClick={onReload}>Refresh</button>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input 
+              className="form-input" 
+              style={{ width: '200px', fontSize: '0.8rem', padding: '6px 10px' }} 
+              placeholder="Search files or tags..." 
+              value={searchQuery}
+              onChange={handleSearchChange}
+            />
+            <button className="btn btn-secondary btn-sm" onClick={() => onReload(searchQuery)}>Refresh</button>
+          </div>
         </div>
         <div className="item-list">
           {!files.length ? (
@@ -514,12 +580,29 @@ function FilesView({ files, onReload, showToast, projectId, isPrivate }) {
             </div>
           ) : files.map(item => (
             <div className="item-card" key={item.id}>
-              <div className="item-title">{item.file_name}</div>
-              <div className="item-meta">
-                <a href={`${API_URL}${item.storage_url}`} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>Download</a>
+              <div className="item-card-header" style={{ marginBottom: '8px' }}>
+                <div className="item-title">{item.file_name}</div>
+                <div className="item-card-actions">
+                   <a href={`${API_URL}${item.storage_url}`} target="_blank" rel="noreferrer" className="icon-btn" title="Download">⬇️</a>
+                </div>
               </div>
-              <div className="item-footer">
-                <span className="creator-badge">👤 Created by: {item.creator_name || item.creator_email}</span>
+              
+              <div className="file-tag-container">
+                {item.tag ? (
+                  <span className="file-tag">🏷️ {item.tag}</span>
+                ) : (
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No tag</span>
+                )}
+                <button className="edit-tag-btn" title="Edit Tag" onClick={() => handleUpdateTag(item.id, item.tag)}>
+                  ✎
+                </button>
+              </div>
+
+              <div className="item-footer" style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span className="creator-badge">👤 {item.creator_name || item.creator_email}</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                  {item.created_at ? new Date(item.created_at).toLocaleDateString() : ''}
+                </span>
               </div>
             </div>
           ))}

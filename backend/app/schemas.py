@@ -1,4 +1,5 @@
 from typing import List, Optional
+from datetime import datetime
 from pydantic import BaseModel, EmailStr
 
 
@@ -119,6 +120,8 @@ class FileResponse(BaseModel):
     project_id: Optional[int]
     file_name: str
     storage_url: str
+    tag: Optional[str] = None
+    created_at: Optional[datetime] = None
     created_by: Optional[int]
     creator_name: Optional[str] = None
     creator_email: Optional[str] = None
@@ -126,6 +129,9 @@ class FileResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class FileUpdateTag(BaseModel):
+    tag: Optional[str] = None
 
 class UserSearchResponse(BaseModel):
     id: int

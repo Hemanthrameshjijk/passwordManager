@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, UniqueConstraint
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, UniqueConstraint, DateTime
+from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from .database import Base
 
@@ -82,6 +83,8 @@ class File(Base):
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     file_name = Column(String, nullable=False)
     storage_url = Column(String, nullable=False)
+    tag = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
 
     project = relationship("Project", back_populates="files")
