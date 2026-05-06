@@ -79,13 +79,15 @@ def list_files(
 
 
 @router.post("/upload", response_model=schemas.FileResponse)
-def upload_file(
+async def upload_file(
     file: UploadFile = File(...),
     project_id: Optional[int] = Form(None),
     tag: Optional[str] = Form(None),
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    from ..supabase_client import supabase, SUPABASE_BUCKET
+
     if project_id:
         membership = db.query(models.ProjectMembership).filter(
             models.ProjectMembership.user_id == current_user.id,
@@ -97,11 +99,30 @@ def upload_file(
     safe_name = file.filename.replace(" ", "_")
     timestamp = str(int(__import__("time").time()))
     target_file_name = f"{current_user.id}_{timestamp}_{safe_name}"
-    path = os.path.join(UPLOAD_ROOT, target_file_name)
-    with open(path, "wb") as buffer:
-        buffer.write(file.file.read())
+    
+    file_content = await file.read()
 
-    storage_url = f"/uploads/{target_file_name}"
+    if supabase:
+        # Upload to Supabase Storage
+        try:
+            supabase.storage.from_(SUPABASE_BUCKET).upload(
+                path=target_file_name,
+                file=file_content,
+                file_options={"content-type": file.content_type}
+            )
+            storage_url = f"supabase://{SUPABASE_BUCKET}/{target_file_name}"
+        except Exception as e:
+            # Fallback if upload fails or bucket not setup
+            print(f"Supabase upload error: {e}")
+            path = os.path.join(UPLOAD_ROOT, target_file_name)
+            with open(path, "wb") as buffer:
+                buffer.write(file_content)
+            storage_url = f"/uploads/{target_file_name}"
+    else:
+        path = os.path.join(UPLOAD_ROOT, target_file_name)
+        with open(path, "wb") as buffer:
+            buffer.write(file_content)
+        storage_url = f"/uploads/{target_file_name}"
     db_file = models.File(
         project_id=project_id,
         file_name=file.filename,
@@ -236,8 +257,27 @@ def download_file(
     if not allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No permission")
         
-    path = os.path.abspath(os.path.join(UPLOAD_ROOT, os.path.basename(file_item.storage_url)))
-    if not os.path.exists(path):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File missing on disk")
-    return FastAPIFileResponse(path, filename=file_item.file_name)
+    from ..supabase_client import supabase, SUPABASE_BUCKET
+    from fastapi.responses import StreamingResponse
+    import io
+
+    if file_item.storage_url.startswith("supabase://"):
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Supabase not configured")
+        
+        file_path = file_item.storage_url.replace(f"supabase://{SUPABASE_BUCKET}/", "")
+        try:
+            res = supabase.storage.from_(SUPABASE_BUCKET).download(file_path)
+            return StreamingResponse(
+                io.BytesIO(res),
+                media_type="application/octet-stream",
+                headers={"Content-Disposition": f'attachment; filename="{file_item.file_name}"'}
+            )
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=f"File not found in Supabase: {str(e)}")
+    else:
+        path = os.path.abspath(os.path.join(UPLOAD_ROOT, os.path.basename(file_item.storage_url)))
+        if not os.path.exists(path):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File missing on disk")
+        return FastAPIFileResponse(path, filename=file_item.file_name)
 
