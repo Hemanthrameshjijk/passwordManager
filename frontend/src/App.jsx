@@ -9,9 +9,9 @@ function setTokenStorage(token) { localStorage.setItem(tokenKey, token); }
 function clearTokenStorage() { localStorage.removeItem(tokenKey); localStorage.removeItem(projectKey); }
 
 function getStoredProjectId() { return localStorage.getItem(projectKey); }
-function setStoredProjectId(id) { 
+function setStoredProjectId(id) {
   if (id === null) localStorage.removeItem(projectKey);
-  else localStorage.setItem(projectKey, String(id)); 
+  else localStorage.setItem(projectKey, String(id));
 }
 
 function apiFetch(path, options = {}, projectId = null) {
@@ -239,9 +239,9 @@ function AuthScreen({ onLogin, showToast }) {
               {loading ? 'Authenticating...' : 'Sign In'}
             </button>
           </form>
-          
+
           <p style={{ textAlign: 'center', marginTop: '24px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-            Only authorized users can access this platform.<br/>
+            Only authorized users can access this platform.<br />
             Contact your administrator for credentials.
           </p>
         </div>
@@ -347,27 +347,27 @@ function Dashboard({ user, activeProjectId, onSwitchProject, onLogout, showToast
         </div>
 
         {view === 'credentials' && (
-          <CredentialsView 
-            credentials={credentials} 
-            onReload={loadCredentials} 
-            showToast={showToast} 
-            projectId={activeProjectId} 
+          <CredentialsView
+            credentials={credentials}
+            onReload={loadCredentials}
+            showToast={showToast}
+            projectId={activeProjectId}
             isPrivate={!activeProjectId}
           />
         )}
         {view === 'files' && (
-          <FilesView 
-            files={files} 
-            onReload={loadFiles} 
-            showToast={showToast} 
-            projectId={activeProjectId} 
+          <FilesView
+            files={files}
+            onReload={loadFiles}
+            showToast={showToast}
+            projectId={activeProjectId}
             isPrivate={!activeProjectId}
           />
         )}
         {view === 'projects' && (
-          <ProjectsView 
-            projects={projects} 
-            onReload={() => { loadProjects(); refreshUser(); }} 
+          <ProjectsView
+            projects={projects}
+            onReload={() => { loadProjects(); refreshUser(); }}
             showToast={showToast}
             activeProjectId={activeProjectId}
             onSwitch={onSwitchProject}
@@ -511,24 +511,6 @@ function FilesView({ files, onReload, showToast, projectId, isPrivate }) {
     showToast('File uploaded');
   };
 
-  const handleUpdateTag = async (fileId, currentTag) => {
-    const newTag = prompt('Enter new tag:', currentTag || '');
-    if (newTag === null) return;
-    
-    const res = await apiFetch(`/files/${fileId}/tag`, { 
-      method: 'PATCH', 
-      body: JSON.stringify({ tag: newTag }) 
-    });
-    
-    if (res.ok) {
-      showToast('Tag updated');
-      onReload(searchQuery);
-      loadTags();
-    } else {
-      showToast('Failed to update tag', 'error');
-    }
-  };
-
   return (
     <div className="panel-grid">
       <div className="panel">
@@ -541,11 +523,11 @@ function FilesView({ files, onReload, showToast, projectId, isPrivate }) {
           </div>
           <div className="form-group">
             <label>Tag (Optional)</label>
-            <input 
-              className="form-input" 
-              placeholder="e.g. v1, Draft, Final" 
-              value={uploadTag} 
-              onChange={e => setUploadTag(e.target.value)} 
+            <input
+              className="form-input"
+              placeholder="e.g. v1, Draft, Final"
+              value={uploadTag}
+              onChange={e => setUploadTag(e.target.value)}
               list="existing-tags"
             />
             <datalist id="existing-tags">
@@ -562,10 +544,10 @@ function FilesView({ files, onReload, showToast, projectId, isPrivate }) {
         <div className="panel-header">
           <h2>📁 {isPrivate ? 'My Private Files' : 'Project Files'}</h2>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <input 
-              className="form-input" 
-              style={{ width: '200px', fontSize: '0.8rem', padding: '6px 10px' }} 
-              placeholder="Search files or tags..." 
+            <input
+              className="form-input"
+              style={{ width: '200px', fontSize: '0.8rem', padding: '6px 10px' }}
+              placeholder="Search files or tags..."
               value={searchQuery}
               onChange={handleSearchChange}
             />
@@ -586,16 +568,13 @@ function FilesView({ files, onReload, showToast, projectId, isPrivate }) {
                    <a href={`${API_URL}${item.storage_url}`} target="_blank" rel="noreferrer" className="icon-btn" title="Download">⬇️</a>
                 </div>
               </div>
-              
+
               <div className="file-tag-container">
                 {item.tag ? (
                   <span className="file-tag">🏷️ {item.tag}</span>
                 ) : (
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No tag</span>
                 )}
-                <button className="edit-tag-btn" title="Edit Tag" onClick={() => handleUpdateTag(item.id, item.tag)}>
-                  ✎
-                </button>
               </div>
 
               <div className="item-footer" style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -659,7 +638,7 @@ function ProjectsView({ projects, onReload, showToast, activeProjectId, onSwitch
             </div>
           </div>
         </form>
-        
+
         <h3 style={{ marginTop: '32px', fontSize: '0.9rem' }}>📁 Your Projects</h3>
         <div className="item-list" style={{ marginTop: '12px' }}>
           {projects.map(p => (
@@ -679,7 +658,7 @@ function ProjectsView({ projects, onReload, showToast, activeProjectId, onSwitch
               {activeProject.role === 'admin' && <span className="role-tag admin">Owner</span>}
             </div>
             <div className="divider" />
-            
+
             {activeProject.role === 'admin' && (
               <div className="invite-section" style={{ marginBottom: '24px' }}>
                 <label className="form-label">Search & Invite Members</label>
