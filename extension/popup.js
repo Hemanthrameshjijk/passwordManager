@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:8000';
+const API_URL = 'https://passwordmanager-5y4r.onrender.com'; // TODO: Replace with actual Render URL
 
 const views = {
   login: document.getElementById('view-login'),
@@ -39,7 +39,7 @@ async function loadVault() {
 
   const credentials = await res.json();
   elements.listCredentials.innerHTML = '';
-  
+
   if (credentials.length === 0) {
     elements.listCredentials.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">No credentials found</div>';
     return;

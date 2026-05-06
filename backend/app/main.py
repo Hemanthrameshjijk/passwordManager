@@ -10,6 +10,8 @@ from . import models, auth
 from .routers import auth as auth_router, users as users_router, credentials as credentials_router, files as files_router, projects as projects_router
 
 
+from sqlalchemy.exc import IntegrityError
+
 def seed_admin():
     db: Session = SessionLocal()
     try:
@@ -25,7 +27,13 @@ def seed_admin():
                 is_superadmin=True
             )
             db.add(new_admin)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                print("Super-admin already seeded by another worker.")
+    except Exception as e:
+        print(f"Warning: seed_admin failed: {e}")
     finally:
         db.close()
 
@@ -33,7 +41,11 @@ def seed_admin():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
-    models.Base.metadata.create_all(bind=engine)
+    try:
+        models.Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        print(f"Warning: create_all failed (likely concurrent worker): {e}")
+    
     seed_admin()
     yield
     # Shutdown logic (none needed)
