@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'https://passwordmanager-5y4r.onrender.com';
 const tokenKey = 'pm_token';
 const projectKey = 'pm_active_project';
 
@@ -307,7 +307,7 @@ function Dashboard({ user, activeProjectId, onSwitchProject, onLogout, showToast
       <div className="topbar">
         <div className="topbar-left">
           <div className="topbar-logo">🔐</div>
-          <div className="topbar-title">Vault</div>
+          <div className="topbar-title">Inventory Management</div>
         </div>
         <div className="topbar-right">
           <div className="org-switcher">
@@ -316,7 +316,7 @@ function Dashboard({ user, activeProjectId, onSwitchProject, onLogout, showToast
               value={activeProjectId || 'null'}
               onChange={(e) => onSwitchProject(e.target.value === 'null' ? null : Number(e.target.value))}
             >
-              <option value="null">🔓 My Private Vault</option>
+              <option value="null">🔓 Project</option>
               {user.projects.map(p => (
                 <option key={p.project_id} value={p.project_id}>
                   🏢 {p.project_name}
